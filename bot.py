@@ -16,11 +16,22 @@ logging.basicConfig(
 # RAILWAY / EVOLUTION / NVIDIA SETTINGS
 # ============================================================
 
-EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
-EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "").strip()
+EVOLUTION_API_URL = os.getenv(
+    "EVOLUTION_API_URL", ""
+).strip().rstrip("/")
 
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
+EVOLUTION_API_KEY = os.getenv(
+    "EVOLUTION_API_KEY", ""
+).strip()
+
+EVOLUTION_INSTANCE = os.getenv(
+    "EVOLUTION_INSTANCE", ""
+).strip()
+
+NVIDIA_API_KEY = os.getenv(
+    "NVIDIA_API_KEY", ""
+).strip()
+
 NVIDIA_BASE_URL = os.getenv(
     "NVIDIA_BASE_URL",
     "https://integrate.api.nvidia.com/v1"
@@ -37,8 +48,14 @@ MAX_HISTORY = 10
 MAX_REPLY_CHARS = 30
 REQUEST_TIMEOUT = 60
 
-# One history per private WhatsApp chat.
-histories = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
+# One history per private WhatsApp chat
+histories = defaultdict(
+    lambda: deque(maxlen=MAX_HISTORY)
+)
+
+# ============================================================
+# SYSTEM PROMPT
+# ============================================================
 
 SYSTEM_PROMPT = """
 You are Abi's WhatsApp AI assistant.
@@ -47,20 +64,25 @@ IMPORTANT:
 Every reply must be 30 characters or fewer.
 
 Rules:
+
 1. If the person sends a simple greeting such as
 hi, hello, hey, hii, hiii, hai, or similar,
 ask them if they would like to ask Abi.
 
-2. If the person says good morning, reply with
-a friendly good morning.
+2. If the person says good morning,
+reply with a friendly good morning.
 
 3. For anything else, reply:
 Wait, Abi will reply soon.
 
 4. Do not answer their actual questions.
+
 5. Do not pretend to be Abi.
+
 6. Do not reveal private information about Abi.
+
 7. Keep replies very short.
+
 8. Match the user's language when practical.
 """.strip()
 
@@ -70,11 +92,18 @@ Wait, Abi will reply soon.
 # ============================================================
 
 def limit_reply(text):
-    """Hard limit every WhatsApp reply to 30 characters."""
+    """
+    Hard limit every WhatsApp reply to 30 characters.
+    """
+
     if not text:
         return "Wait, Abi will reply soon."
 
     text = str(text).strip()
+
+    if not text:
+        return "Wait, Abi will reply soon."
+
     return text[:MAX_REPLY_CHARS].rstrip()
 
 
@@ -89,19 +118,23 @@ def extract_event(payload):
 
 def get_event_data(payload):
     data = payload.get("data", payload)
+
     return data if isinstance(data, dict) else {}
 
 
 def extract_remote_jid(payload):
     data = get_event_data(payload)
+
     key = data.get("key", {})
 
     if isinstance(key, dict):
         jid = key.get("remoteJid")
+
         if jid:
             return str(jid)
 
     jid = data.get("remoteJid")
+
     if jid:
         return str(jid)
 
@@ -110,6 +143,7 @@ def extract_remote_jid(payload):
 
 def extract_text(payload):
     data = get_event_data(payload)
+
     message = data.get("message", {})
 
     if not isinstance(message, dict):
@@ -117,35 +151,61 @@ def extract_text(payload):
 
     # Normal WhatsApp text
     text = message.get("conversation")
+
     if isinstance(text, str) and text.strip():
         return text.strip()
 
     # Extended text
-    extended = message.get("extendedTextMessage", {})
+    extended = message.get(
+        "extendedTextMessage",
+        {}
+    )
+
     if isinstance(extended, dict):
         text = extended.get("text")
+
         if isinstance(text, str) and text.strip():
             return text.strip()
 
     # Image caption
-    image = message.get("imageMessage", {})
+    image = message.get(
+        "imageMessage",
+        {}
+    )
+
     if isinstance(image, dict):
         text = image.get("caption")
+
         if isinstance(text, str) and text.strip():
             return text.strip()
 
     # Ephemeral message
-    ephemeral = message.get("ephemeralMessage", {})
+    ephemeral = message.get(
+        "ephemeralMessage",
+        {}
+    )
+
     if isinstance(ephemeral, dict):
-        inner = ephemeral.get("message", {})
+        inner = ephemeral.get(
+            "message",
+            {}
+        )
+
         if isinstance(inner, dict):
+
             text = inner.get("conversation")
+
             if isinstance(text, str) and text.strip():
                 return text.strip()
 
-            extended = inner.get("extendedTextMessage", {})
+            extended = inner.get(
+                "extendedTextMessage",
+                {}
+            )
+
             if isinstance(extended, dict):
                 text = extended.get("text")
+
                 if isinstance(text, str) and text.strip():
                     return text.strip()
 
@@ -154,6 +214,7 @@ def extract_text(payload):
 
 def is_from_me(payload):
     data = get_event_data(payload)
+
     key = data.get("key", {})
 
     return (
@@ -176,8 +237,11 @@ def evolution_headers():
 def normalize_number(jid):
     """
     Evolution sendText normally accepts the phone number.
-    Keep group JIDs unchanged, although groups are ignored below.
+
+    Keep group JIDs unchanged, although groups
+    are ignored below.
     """
+
     if not jid:
         return ""
 
@@ -191,10 +255,10 @@ def normalize_number(jid):
 
     return (
         jid.replace("+", "")
-           .replace(" ", "")
-           .replace("-", "")
-           .replace("(", "")
-           .replace(")", "")
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
     )
 
 
@@ -203,8 +267,11 @@ def normalize_number(jid):
 # ============================================================
 
 def ask_nvidia(chat_id, user_text):
+
     if not NVIDIA_API_KEY:
-        raise RuntimeError("NVIDIA_API_KEY is missing.")
+        raise RuntimeError(
+            "NVIDIA_API_KEY is missing."
+        )
 
     history = histories[chat_id]
 
@@ -224,10 +291,14 @@ def ask_nvidia(chat_id, user_text):
 
     response = requests.post(
         f"{NVIDIA_BASE_URL}/chat/completions",
+
         headers={
-            "Authorization": f"Bearer {NVIDIA_API_KEY}",
-            "Content-Type": "application/json"
+            "Authorization":
+                f"Bearer {NVIDIA_API_KEY}",
+            "Content-Type":
+                "application/json"
         },
+
         json={
             "model": NVIDIA_MODEL,
             "messages": messages,
@@ -235,25 +306,73 @@ def ask_nvidia(chat_id, user_text):
             "max_tokens": 40,
             "stream": False
         },
+
         timeout=REQUEST_TIMEOUT
     )
 
     if not response.ok:
+
         logging.error(
             "NVIDIA error %s: %s",
             response.status_code,
             response.text[:2000]
         )
+
         response.raise_for_status()
 
     result = response.json()
 
-    try:
-        answer = result["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
+    # --------------------------------------------------------
+    # SAFE NVIDIA RESPONSE PARSING
+    # --------------------------------------------------------
+
+    choices = result.get("choices")
+
+    if not isinstance(choices, list) or not choices:
         raise RuntimeError(
-            f"Unexpected NVIDIA response: {result}"
+            f"NVIDIA returned no choices: {result}"
         )
+
+    choice = choices[0]
+
+    if not isinstance(choice, dict):
+        raise RuntimeError(
+            f"Invalid NVIDIA choice: {result}"
+        )
+
+    message = choice.get("message")
+
+    if not isinstance(message, dict):
+        raise RuntimeError(
+            f"NVIDIA message missing: {result}"
+        )
+
+    # NVIDIA can sometimes return null content.
+    content = message.get("content")
+
+    if content is None:
+        # Some models may provide reasoning/content
+        # in another field. Try common alternatives.
+
+        content = (
+            message.get("text")
+            or message.get("reasoning_content")
+            or ""
+        )
+
+    if not isinstance(content, str):
+        content = str(content)
+
+    answer = content.strip()
+
+    # If NVIDIA returned empty content, use fallback.
+    if not answer:
+        logging.warning(
+            "NVIDIA returned empty content: %s",
+            result
+        )
+
+        answer = "Wait, Abi will reply soon."
 
     answer = limit_reply(answer)
 
@@ -262,6 +381,7 @@ def ask_nvidia(chat_id, user_text):
         "role": "user",
         "content": user_text
     })
+
     history.append({
         "role": "assistant",
         "content": answer
@@ -275,14 +395,21 @@ def ask_nvidia(chat_id, user_text):
 # ============================================================
 
 def send_whatsapp(chat_id, text):
+
     if not EVOLUTION_API_URL:
-        raise RuntimeError("EVOLUTION_API_URL is missing.")
+        raise RuntimeError(
+            "EVOLUTION_API_URL is missing."
+        )
 
     if not EVOLUTION_API_KEY:
-        raise RuntimeError("EVOLUTION_API_KEY is missing.")
+        raise RuntimeError(
+            "EVOLUTION_API_KEY is missing."
+        )
 
     if not EVOLUTION_INSTANCE:
-        raise RuntimeError("EVOLUTION_INSTANCE is missing.")
+        raise RuntimeError(
+            "EVOLUTION_INSTANCE is missing."
+        )
 
     text = limit_reply(text)
 
@@ -293,32 +420,39 @@ def send_whatsapp(chat_id, text):
     )
 
     response = requests.post(
+
         url,
+
         headers=evolution_headers(),
+
         json={
             "number": normalize_number(chat_id),
             "text": text
         },
+
         timeout=30
     )
 
     if not response.ok:
+
         logging.error(
             "Evolution send error %s: %s",
             response.status_code,
             response.text[:2000]
         )
+
         response.raise_for_status()
 
     return response.json()
 
 
 # ============================================================
-# HOME / HEALTH / AI STATUS
+# HOME
 # ============================================================
 
 @app.get("/")
 def home():
+
     return jsonify({
         "status": "online",
         "bot": "Abi AI",
@@ -326,8 +460,13 @@ def home():
     })
 
 
+# ============================================================
+# HEALTH
+# ============================================================
+
 @app.get("/health")
 def health():
+
     return jsonify({
         "status": "ok",
         "nvidia_key": bool(NVIDIA_API_KEY),
@@ -337,46 +476,132 @@ def health():
     })
 
 
+# ============================================================
+# AI STATUS
+# ============================================================
+
 @app.get("/ai-status")
+@app.get("/status-ai")
 def ai_status():
+
     if not NVIDIA_API_KEY:
+
         return jsonify({
             "ai": "error",
-            "message": "NVIDIA_API_KEY is missing"
+            "message":
+                "NVIDIA_API_KEY is missing"
         }), 500
 
     try:
+
         response = requests.post(
+
             f"{NVIDIA_BASE_URL}/chat/completions",
+
             headers={
-                "Authorization": f"Bearer {NVIDIA_API_KEY}",
-                "Content-Type": "application/json"
+                "Authorization":
+                    f"Bearer {NVIDIA_API_KEY}",
+
+                "Content-Type":
+                    "application/json"
             },
+
             json={
                 "model": NVIDIA_MODEL,
+
                 "messages": [
                     {
                         "role": "user",
                         "content": "Reply only OK"
                     }
                 ],
+
                 "temperature": 0,
+
                 "max_tokens": 10,
+
                 "stream": False
             },
+
             timeout=30
         )
 
         if not response.ok:
+
             return jsonify({
                 "ai": "error",
-                "status_code": response.status_code,
-                "message": response.text[:2000]
+                "status_code":
+                    response.status_code,
+                "message":
+                    response.text[:2000]
             }), 500
 
         result = response.json()
 
-        answer = result["choices"][0]["message"]["content"].strip()
+        # ----------------------------------------------------
+        # SAFE RESPONSE PARSING
+        # ----------------------------------------------------
+
+        choices = result.get("choices")
+
+        if not isinstance(choices, list) or not choices:
+
+            return jsonify({
+                "ai": "error",
+                "message":
+                    "NVIDIA returned no choices",
+                "raw": result
+            }), 500
+
+        choice = choices[0]
+
+        if not isinstance(choice, dict):
+
+            return jsonify({
+                "ai": "error",
+                "message":
+                    "Invalid NVIDIA choice",
+                "raw": result
+            }), 500
+
+        message = choice.get("message")
+
+        if not isinstance(message, dict):
+
+            return jsonify({
+                "ai": "error",
+                "message":
+                    "NVIDIA message missing",
+                "raw": result
+            }), 500
+
+        content = message.get("content")
+
+        # Handle null content safely
+        if content is None:
+
+            content = (
+                message.get("text")
+                or message.get(
+                    "reasoning_content"
+                )
+                or ""
+            )
+
+        if not isinstance(content, str):
+            content = str(content)
+
+        answer = content.strip()
+
+        if not answer:
+
+            return jsonify({
+                "ai": "error",
+                "message":
+                    "NVIDIA returned empty content",
+                "model": NVIDIA_MODEL,
+                "raw": result
+            }), 500
 
         return jsonify({
             "ai": "ok",
@@ -385,7 +610,10 @@ def ai_status():
         })
 
     except Exception as exc:
-        logging.exception("AI status check failed")
+
+        logging.exception(
+            "AI status check failed"
+        )
 
         return jsonify({
             "ai": "error",
@@ -399,10 +627,15 @@ def ai_status():
 
 @app.post("/webhook")
 def webhook():
+
     try:
-        payload = request.get_json(silent=True)
+
+        payload = request.get_json(
+            silent=True
+        )
 
         if not isinstance(payload, dict):
+
             return jsonify({
                 "status": "ignored",
                 "reason": "invalid JSON"
@@ -410,9 +643,10 @@ def webhook():
 
         event = extract_event(payload)
 
-        # Process only messages.upsert when Evolution includes
-        # an event name.
+        # Process only messages.upsert
+        # when Evolution includes an event name.
         if event and event != "messages.upsert":
+
             return jsonify({
                 "status": "ignored",
                 "event": event
@@ -420,18 +654,23 @@ def webhook():
 
         # Never answer our own messages.
         if is_from_me(payload):
+
             return jsonify({
                 "status": "ignored_from_me"
             })
 
-        remote_jid = extract_remote_jid(payload)
+        remote_jid = extract_remote_jid(
+            payload
+        )
 
         # Groups are intentionally disabled.
         if "@g.us" in remote_jid:
+
             logging.info(
                 "Ignoring WhatsApp group message: %s",
                 remote_jid
             )
+
             return jsonify({
                 "status": "ignored_group"
             })
@@ -439,6 +678,7 @@ def webhook():
         text = extract_text(payload)
 
         if not remote_jid or not text:
+
             return jsonify({
                 "status": "ignored_non_text"
             })
@@ -449,16 +689,32 @@ def webhook():
             text[:200]
         )
 
+        # ----------------------------------------------------
+        # ASK NVIDIA
+        # ----------------------------------------------------
+
         try:
+
             answer = ask_nvidia(
                 remote_jid,
                 text
             )
+
         except Exception:
-            logging.exception("NVIDIA generation failed")
-            answer = "Wait, Abi will reply soon."
+
+            logging.exception(
+                "NVIDIA generation failed"
+            )
+
+            answer = (
+                "Wait, Abi will reply soon."
+            )
 
         answer = limit_reply(answer)
+
+        # ----------------------------------------------------
+        # SEND WHATSAPP MESSAGE
+        # ----------------------------------------------------
 
         send_whatsapp(
             remote_jid,
@@ -471,7 +727,10 @@ def webhook():
         })
 
     except Exception as exc:
-        logging.exception("Webhook processing failed")
+
+        logging.exception(
+            "Webhook processing failed"
+        )
 
         return jsonify({
             "status": "error",
@@ -485,33 +744,49 @@ def webhook():
 
 @app.post("/test")
 def test_ai():
-    body = request.get_json(silent=True) or {}
+
+    body = request.get_json(
+        silent=True
+    ) or {}
 
     chat_id = str(
-        body.get("chat_id", "test")
+        body.get(
+            "chat_id",
+            "test"
+        )
     )
 
     message = str(
-        body.get("message", "")
+        body.get(
+            "message",
+            ""
+        )
     ).strip()
 
     if not message:
+
         return jsonify({
-            "error": "message is required"
+            "error":
+                "message is required"
         }), 400
 
     try:
+
         answer = ask_nvidia(
             chat_id,
             message
         )
 
         return jsonify({
-            "answer": limit_reply(answer)
+            "answer":
+                limit_reply(answer)
         })
 
     except Exception as exc:
-        logging.exception("AI test failed")
+
+        logging.exception(
+            "AI test failed"
+        )
 
         return jsonify({
             "error": str(exc)
@@ -523,9 +798,19 @@ def test_ai():
 # ============================================================
 
 if __name__ == "__main__":
-    logging.info("Abi AI starting...")
-    logging.info("NVIDIA model: %s", NVIDIA_MODEL)
-    logging.info("Webhook: /webhook")
+
+    logging.info(
+        "Abi AI starting..."
+    )
+
+    logging.info(
+        "NVIDIA model: %s",
+        NVIDIA_MODEL
+    )
+
+    logging.info(
+        "Webhook: /webhook"
+    )
 
     app.run(
         host="0.0.0.0",
