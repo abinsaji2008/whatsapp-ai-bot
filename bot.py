@@ -254,9 +254,50 @@ def webhook(event_path=None):
 # HEALTH CHECK
 # ============================================================
 
+@app.route("/ai-status", methods=["GET"])
+def ai_status():
+    if not NVIDIA_API_KEY:
+        return jsonify({
+            "ai": "error",
+            "message": "NVIDIA_API_KEY is missing"
+        }), 500
+
+    try:
+        response = requests.post(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {NVIDIA_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": MODEL,
+                "messages": [
+                    {"role": "user", "content": "Reply only with OK"}
+                ],
+                "max_tokens": 10,
+                "temperature": 0
+            },
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        return jsonify({
+            "ai": "ok",
+            "model": MODEL,
+            "response": response.json()["choices"][0]["message"]["content"]
+        })
+
+    except Exception as e:
+        return jsonify({
+            "ai": "error",
+            "message": str(e)
+        }), 500
+
+
 @app.route("/", methods=["GET"])
 def home():
-    return "WhatsApp AI Bot is running."
+    return "WhatsApp AI bot is running."
 
 
 @app.route("/health", methods=["GET"])
