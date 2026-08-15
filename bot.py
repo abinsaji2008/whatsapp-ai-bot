@@ -122,7 +122,7 @@ if __name__ == "__main__":
     if EVOLUTION_API_KEY:
         headers["apikey"] = EVOLUTION_API_KEY
 
-    return headers
+   
 
 
 def normalize_number(value):
