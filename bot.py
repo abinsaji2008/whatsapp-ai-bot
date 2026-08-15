@@ -4,87 +4,123 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# ============================================================
+# =========================================================
 # ENVIRONMENT VARIABLES
-# ============================================================
-# NVIDIA_API_KEY       = your NVIDIA API key
-# EVOLUTION_API_URL    = your Evolution API URL
-# EVOLUTION_API_KEY    = your Evolution API key
-# EVOLUTION_INSTANCE   = your Evolution instance name
-#
-# Do NOT put these secrets directly in this file.
-# Add them in Railway -> Variables.
-# ============================================================
+# =========================================================
 
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "").strip()
-EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "").strip().rstrip("/")
-EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "").strip()
-EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE", "").strip()
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "").rstrip("/")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY")
+EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE")
 
-MODEL = os.getenv("NVIDIA_MODEL", "stepfun-ai/step-3.7-flash")
+# NVIDIA model
+MODEL = "stepfun-ai/step-3.7-flash"
 
-# Keep the last few messages for each private chat.
-MAX_HISTORY = 10
+# Maximum reply length
+MAX_REPLY_CHARS = 30
+
+# Conversation history
 histories = {}
+MAX_HISTORY = 20
 
 
-# ============================================================
+# =========================================================
 # AI
-# ============================================================
+# =========================================================
 
-def ask_nvidia(chat_id, text):
-    """Send the user's message to NVIDIA NIM and return the answer."""
+def ask_nvidia(user_number, text):
 
-    history = histories.setdefault(chat_id, [])
+    history = histories.setdefault(user_number, [])
+
+    # Add system instructions only once
+    if not history:
+        history.append({
+            "role": "system",
+            "content": """
+You are Abi's WhatsApp AI assistant.
+
+IMPORTANT RULE:
+Every reply MUST be 30 characters
+or fewer.
+
+Rules:
+
+1. If the person sends a simple
+greeting such as hi, hello, hey,
+hii, hiii or hai, ask:
+"Would you like to ask Abi?"
+
+2. If they say good morning,
+reply with a friendly good morning.
+
+3. For anything else reply:
+"Wait, Abi will reply soon."
+
+4. Do not answer their questions.
+5. Do not pretend to be Abi.
+6. Do not provide private information.
+7. Keep replies short.
+"""
+        })
 
     history.append({
         "role": "user",
         "content": text
     })
 
-    # Keep memory small.
-    history[:] = history[-MAX_HISTORY:]
+    # Keep system message + latest messages
+    if len(history) > MAX_HISTORY + 1:
+        history = [history[0]] + history[-MAX_HISTORY:]
+        histories[user_number] = history
 
     response = requests.post(
         "https://integrate.api.nvidia.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {NVIDIA_API_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json"
         },
         json={
             "model": MODEL,
             "messages": history,
-            "temperature": 0.7,
-            "max_tokens": 1024,
+            "temperature": 0.3,
+            "max_tokens": 50
         },
-        timeout=90,
+        timeout=60
     )
 
     response.raise_for_status()
 
-    result = response.json()
+    data = response.json()
 
-    answer = result["choices"][0]["message"]["content"].strip()
+    answer = data["choices"][0]["message"]["content"].strip()
+
+    # =====================================================
+    # HARD 30 CHARACTER LIMIT
+    # =====================================================
+
+    if len(answer) > MAX_REPLY_CHARS:
+        answer = answer[:MAX_REPLY_CHARS].rstrip()
 
     history.append({
         "role": "assistant",
         "content": answer
     })
 
-    history[:] = history[-MAX_HISTORY:]
+    if len(history) > MAX_HISTORY + 1:
+        history[:] = [history[0]] + history[-MAX_HISTORY:]
 
     return answer
 
 
-# ============================================================
-# EVOLUTION API
-# ============================================================
+# =========================================================
+# SEND WHATSAPP MESSAGE
+# =========================================================
 
 def send_text(remote_jid, text):
-    """Send a WhatsApp text message using Evolution API."""
 
     url = (
-        f"{EVOLUTION_API_URL}/message/sendText/"
+        f"{EVOLUTION_API_URL}"
+        f"/message/sendText/"
         f"{EVOLUTION_INSTANCE}"
     )
 
@@ -92,13 +128,272 @@ def send_text(remote_jid, text):
         url,
         headers={
             "apikey": EVOLUTION_API_KEY,
-            "Content-Type": "application/json",
+            "Content-Type": "application/json"
         },
         json={
             "number": remote_jid,
-            "text": text,
+            "text": text
         },
-        timeout=30,
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    return response.json()
+
+
+# =========================================================
+# WHATSAPP WEBHOOK
+# =========================================================
+
+@app.route("/webhook", methods=["POST"])
+@app.route("/webhook/<path:event_path>", methods=["POST"])
+def webhook(event_path=None):
+
+    data = request.get_json(silent=True) or {}
+
+    # Evolution API data
+    msg_data = data.get("data", {})
+
+    key = msg_data.get("key", {})
+
+    message = msg_data.get("message", {})
+
+    remote_jid = key.get(
+        "remoteJid",
+        ""
+    )
+
+    from_me = key.get(
+        "fromMe",
+        False
+    )
+
+    # =====================================================
+    # IGNORE BOT'S OWN MESSAGES
+    # =====================================================
+
+    if from_me:
+        return jsonify({
+            "status": "ignored_from_me"
+        })
+
+
+    # =====================================================
+    # IGNORE GROUPS
+    # =====================================================
+
+    if "@g.us" in remote_jid:
+        return jsonify({
+            "status": "ignored_group"
+        })
+
+
+    # =====================================================
+    # GET MESSAGE TEXT
+    # =====================================================
+
+    text = (
+        message.get("conversation")
+        or message.get(
+            "extendedTextMessage",
+            {}
+        ).get("text")
+        or message.get(
+            "imageMessage",
+            {}
+        ).get("caption")
+        or ""
+    ).strip()
+
+
+    # =====================================================
+    # IGNORE EMPTY MESSAGES
+    # =====================================================
+
+    if not text or not remote_jid:
+        return jsonify({
+            "status": "ignored_non_text"
+        })
+
+
+    # =====================================================
+    # CHECK ENVIRONMENT VARIABLES
+    # =====================================================
+
+    if not NVIDIA_API_KEY:
+        return jsonify({
+            "error": "NVIDIA_API_KEY missing"
+        }), 500
+
+    if not EVOLUTION_API_URL:
+        return jsonify({
+            "error": "EVOLUTION_API_URL missing"
+        }), 500
+
+    if not EVOLUTION_API_KEY:
+        return jsonify({
+            "error": "EVOLUTION_API_KEY missing"
+        }), 500
+
+    if not EVOLUTION_INSTANCE:
+        return jsonify({
+            "error": "EVOLUTION_INSTANCE missing"
+        }), 500
+
+
+    # =====================================================
+    # ASK NVIDIA AI
+    # =====================================================
+
+    try:
+
+        answer = ask_nvidia(
+            remote_jid,
+            text
+        )
+
+        # Make absolutely sure reply is <= 30 chars
+        answer = answer[:MAX_REPLY_CHARS].rstrip()
+
+        send_text(
+            remote_jid,
+            answer
+        )
+
+        return jsonify({
+            "status": "replied",
+            "message": answer
+        })
+
+
+    except Exception as e:
+
+        app.logger.exception(
+            "Webhook processing failed"
+        )
+
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+
+# =========================================================
+# AI STATUS
+# =========================================================
+
+@app.route("/ai-status", methods=["GET"])
+def ai_status():
+
+    if not NVIDIA_API_KEY:
+
+        return jsonify({
+            "ai": "error",
+            "message": "NVIDIA_API_KEY is missing"
+        }), 500
+
+
+    try:
+
+        response = requests.post(
+            "https://integrate.api.nvidia.com/v1/chat/completions",
+
+            headers={
+                "Authorization":
+                    f"Bearer {NVIDIA_API_KEY}",
+                "Content-Type":
+                    "application/json"
+            },
+
+            json={
+                "model": MODEL,
+
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Reply only OK"
+                    }
+                ],
+
+                "max_tokens": 10,
+                "temperature": 0
+            },
+
+            timeout=30
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        answer = (
+            data["choices"][0]
+            ["message"]["content"]
+            .strip()
+        )
+
+        return jsonify({
+            "ai": "ok",
+            "model": MODEL,
+            "response": answer
+        })
+
+
+    except Exception as e:
+
+        return jsonify({
+            "ai": "error",
+            "message": str(e)
+        }), 500
+
+
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
+@app.route("/health", methods=["GET"])
+def health():
+
+    return jsonify({
+        "status": "ok",
+        "ai_key": bool(NVIDIA_API_KEY),
+        "evolution_url": bool(EVOLUTION_API_URL),
+        "evolution_key": bool(EVOLUTION_API_KEY),
+        "instance": bool(EVOLUTION_INSTANCE)
+    })
+
+
+# =========================================================
+# HOME
+# =========================================================
+
+@app.route("/", methods=["GET"])
+def home():
+
+    return jsonify({
+        "status": "running",
+        "service": "WhatsApp AI Bot",
+        "ai": MODEL
+    })
+
+
+# =========================================================
+# START SERVER
+# =========================================================
+
+if __name__ == "__main__":
+
+    port = int(
+        os.getenv(
+            "PORT",
+            "8080"
+        )
+    )
+
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )        timeout=30,
     )
 
     response.raise_for_status()
